@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Particle DNA</title>
+  <style>
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #000000;
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: #000000;
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="scene" aria-label="Living particle swarm DNA"></canvas>
+
+  <script type="module">
+    import * as THREE from 'three';
+
+    const canvas = document.getElementById('scene');
+    const renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: true,
+      alpha: false,
+      powerPreference: 'high-performance'
+    });
+
+    renderer.setClearColor(0x000000, 1);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+    renderer.autoClear = true;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
+
+    const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 40);
+    camera.position.set(0, 0.05, 8.1);
+    camera.lookAt(0, 0, 0);
+
+    const PARTICLE_COUNT = 30000;
+    const positions = new Float32Array(PARTICLE_COUNT * 3);
+    const base = new Float32Array(PARTICLE_COUNT * 4);
+    const motion = new Float32Array(PARTICLE_COUNT * 4);
+    const detail = new Float32Array(PARTICLE_COUNT * 4);
+
+    // Deterministic seeds make every visit feel identical while retaining organic variety.
+    let seedState = 0x8f31c4b7;
+    const random = () => {
+      seedState = (seedState + 0x6d2b79f5) | 0;
+      let t = Math.imul(seedState ^ (seedState >>> 15), 1 | seedState);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+      const i4 = i * 4;
+      const i3 = i * 3;
+
+      positions[i3] = 0;
+      positions[i3 + 1] = 0;
+      positions[i3 + 2] = 0;
+
+      // Axial seed, phase, volumetric offset, and behavior class.
+      base[i4] = random();
+      base[i4 + 1] = random();
+      base[i4 + 2] = random();
+      base[i4 + 3] = random();
+
+      // Preferred strand, axial advection, tube circulation, and independent size.
+      motion[i4] = random() < 0.5 ? 0 : 1;
+      motion[i4 + 1] = random();
+      motion[i4 + 2] = random();
+      motion[i4 + 3] = 0.45 + Math.pow(random(), 1.9) * 1.15;
+
+      // Noise, attraction weight, bridge timing, and individual brightness.
+      detail[i4] = random();
+      detail[i4 + 1] = 0.45 + random() * 0.55;
+      detail[i4 + 2] = random();
+      detail[i4 + 3] = 0.48 + random() * 0.52;
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('aBase', new THREE.BufferAttribute(base, 4));
+    geometry.setAttribute('aMotion', new THREE.BufferAttribute(motion, 4));
+    geometry.setAttribute('aDetail', new THREE.BufferAttribute(detail, 4));
+
+    const material = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      depthTest: true,
+      blending: THREE.AdditiveBlending,
+      uniforms: {
+        uTime: { value: 0 },
+        uPixelRatio: { value: Math.min(window.devicePixelRatio || 1, 2) }
+      },
+      vertexShader: /* glsl */`
+        precision highp float;
+
+        attribute vec4 aBase;
+        attribute vec4 aMotion;
+        attribute vec4 aDetail;
+
+        uniform float uTime;
+        uniform float uPixelRatio;
+
+        varying float vAlpha;
+        varying float vSeed;
+
+        const float TAU = 6.283185307179586;
+        const float HEIGHT = 5.85;
+        const float RADIUS = 1.18;
+        const float TURNS = 2.72;
+
+        float hash(vec3 p) {
+          p = fract(p * 0.3183099 + vec3(0.11, 0.17, 0.23));
+          p *= 17.0;
+          return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+        }
+
+        float noise(vec3 x) {
+          vec3 i = floor(x);
+          vec3 f = fract(x);
+          f = f * f * (3.0 - 2.0 * f);
+
+          return mix(
+            mix(
+              mix(hash(i + vec3(0.0, 0.0, 0.0)), hash(i + vec3(1.0, 0.0, 0.0)), f.x),
+              mix(hash(i + vec3(0.0, 1.0, 0.0)), hash(i + vec3(1.0, 1.0, 0.0)), f.x),
+              f.y
+            ),
+            mix(
+              mix(hash(i + vec3(0.0, 0.0, 1.0)), hash(i + vec3(1.0, 0.0, 1.0)), f.x),
+              mix(hash(i + vec3(0.0, 1.0, 1.0)), hash(i + vec3(1.0, 1.0, 1.0)), f.x),
+              f.y
+            ),
+            f.z
+          );
+        }
+
+        float fbm(vec3 p) {
+          float value = 0.0;
+          float amplitude = 0.52;
+          mat3 turn = mat3(
+             0.00,  0.80,  0.60,
+            -0.80,  0.36, -0.48,
+            -0.60, -0.48,  0.64
+          );
+
+          for (int i = 0; i < 3; i++) {
+            value += amplitude * noise(p);
+            p = turn * p * 2.04 + vec3(3.1, 1.7, 2.3);
+            amplitude *= 0.5;
+          }
+
+          return value;
+        }
+
+        void main() {
+          float seed = aBase.w;
+          float side = aMotion.x;
+          float axialSpeed = mix(0.012, 0.034, aMotion.y);
+          float circulationSpeed = mix(0.025, 0.095, aMotion.z);
+
+          // Continuous axial migration: no particle remains glued to one point.
+          float t = fract(aBase.x + uTime * axialSpeed);
+          float axial = (t - 0.5) * HEIGHT;
+
+          // Rounded, breathing ends preserve the molecular silhouette.
+          float endTaper = smoothstep(0.0, 0.075, t) * smoothstep(1.0, 0.925, t);
+          float helixRadius = RADIUS * (0.56 + 0.44 * endTaper);
+
+          float helixAngle = TAU * TURNS * t;
+          vec3 strandA = vec3(cos(helixAngle), 0.0, sin(helixAngle)) * helixRadius;
+          vec3 strandB = -strandA;
+
+          // Most particles school around either strand. A shifting minority continuously
+          // crosses the center, creating living, moving connections rather than rungs.
+          float bridge = smoothstep(0.77, 0.91, seed);
+          float bridgeProgress = fract(aDetail.z * 7.31 + uTime * mix(0.010, 0.022, aMotion.z));
+          float bridgeEase = bridgeProgress * bridgeProgress * (3.0 - 2.0 * bridgeProgress);
+          vec3 axis = mix(
+            mix(strandA, strandB, side),
+            mix(strandA, strandB, bridgeEase),
+            bridge
+          );
+
+          // Volumetric school offsets: not a shell, and never two one-particle-thick strings.
+          float orbit = TAU * fract(aBase.y * 3.17 + uTime * circulationSpeed + seed * 0.73);
+          float phi = acos(clamp(2.0 * fract(aBase.z * 5.91 + seed) - 1.0, -1.0, 1.0));
+          float cohesionPulse = 0.82 + 0.24 * sin(uTime * mix(0.22, 0.48, aDetail.x) + seed * TAU);
+          float tubeRadius = mix(0.06, 0.48, pow(aBase.z, 1.42)) * cohesionPulse;
+          tubeRadius = mix(tubeRadius, 0.09 + 0.22 * aBase.z, bridge);
+
+          vec3 offset = vec3(
+            sin(phi) * cos(orbit),
+            cos(phi),
+            sin(phi) * sin(orbit)
+          ) * tubeRadius;
+
+          vec3 point = axis;
+          point.y += axial + offset.y;
+          point.xz += offset.xz;
+
+          // Slow collective meander keeps the recognizable double helix organic.
+          float sway = 0.035 * sin(TAU * (t * 0.55 + uTime * 0.025) + seed * 0.5);
+          point.xz += vec2(cos(helixAngle), sin(helixAngle)) * sway;
+
+          // Schooling-like coherent turbulence, with a little independent flutter.
+          vec3 turbulenceSeed = vec3(seed * 17.31, aBase.x * 9.73, aBase.y * 13.19);
+          float timeDrift = uTime * 0.095;
+          vec3 n = vec3(
+            fbm(point * 0.62 + turbulenceSeed + vec3(timeDrift, 0.0, -timeDrift * 0.7)),
+            fbm(point * 0.55 + turbulenceSeed.yzx + vec3(-timeDrift * 0.6, timeDrift, 0.0)),
+            fbm(point * 0.59 + turbulenceSeed.zxy + vec3(0.0, -timeDrift * 0.8, timeDrift))
+          );
+          vec3 curlLike = (n - 0.5) * 2.0;
+          point += curlLike * mix(0.035, 0.16, aDetail.x) * (1.0 - bridge * 0.35);
+          point += vec3(
+            sin(uTime * 1.7 + seed * TAU),
+            sin(uTime * 1.3 + seed * 19.0),
+            cos(uTime * 1.5 + seed * 31.0)
+          ) * 0.012;
+
+          vec4 modelView = modelViewMatrix * vec4(point, 1.0);
+          gl_Position = projectionMatrix * modelView;
+
+          float distanceFade = smoothstep(12.0, 4.6, -modelView.z);
+          float edgeFade = smoothstep(0.0, 0.07, t) * smoothstep(1.0, 0.93, t);
+          vAlpha = (0.34 + 0.66 * aDetail.w) * edgeFade * mix(0.62, 1.0, distanceFade);
+          vSeed = seed;
+
+          float perspectiveSize = 32.0 / max(2.0, -modelView.z);
+          gl_PointSize = clamp(aMotion.w * perspectiveSize * uPixelRatio, 0.65, 7.0 * uPixelRatio);
+        }
+      `,
+      fragmentShader: /* glsl */`
+        precision highp float;
+
+        varying float vAlpha;
+        varying float vSeed;
+
+        void main() {
+          vec2 uv = gl_PointCoord - 0.5;
+          float d = length(uv) * 2.0;
+
+          float core = exp(-d * d * 20.0);
+          float halo = exp(-d * d * 4.8) * 0.42;
+          float edge = 1.0 - smoothstep(0.72, 1.0, d);
+          float alpha = clamp(core + halo, 0.0, 1.0) * edge * vAlpha;
+
+          // Monochrome, very slightly varied white to avoid a flat digital stamp.
+          vec3 white = vec3(0.91 + 0.09 * fract(vSeed * 7.13));
+          vec3 color = min(white * alpha * 1.32, vec3(1.0));
+          gl_FragColor = vec4(color, alpha);
+        }
+      `
+    });
+
+    const swarm = new THREE.Points(geometry, material);
+    swarm.frustumCulled = false;
+    scene.add(swarm);
+
+    const clock = new THREE.Clock();
+
+    const render = () => {
+      const time = clock.getElapsedTime();
+      material.uniforms.uTime.value = time;
+
+      // The whole living formation turns slowly around the vertical axis.
+      swarm.rotation.y = time * 0.115;
+      swarm.rotation.x = 0.035 * Math.sin(time * 0.16);
+      swarm.rotation.z = 0.018 * Math.sin(time * 0.11);
+
+      renderer.render(scene, camera);
+      requestAnimationFrame(render);
+    };
+
+    const resize = () => {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.setSize(width, height, false);
+      material.uniforms.uPixelRatio.value = Math.min(window.devicePixelRatio || 1, 2);
+    };
+
+    window.addEventListener('resize', resize, { passive: true });
+    render();
+  </script>
+</body>
+</html>
