@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: ttyd-terminal
+    runtime: docker
+    dockerfilePath: ./ttyd/Dockerfile
+    dockerContext: .
+    plan: starter
+    envVars:
+      - key: TTYD_CREDENTIAL
+        sync: false
