@@ -25,6 +25,14 @@ You can also create a **Web Service** manually:
 
 Render supplies the `PORT` environment variable. The container binds ttyd to `0.0.0.0` on that port.
 
+## Included terminal tools
+
+- `bash`: interactive shell.
+- `tmux`: installed in the Docker image and available to the non-root `terminal` user.
+- `sudo` is intentionally not installed; the terminal runs without root privileges.
+
+If you change the Dockerfile, Render must rebuild the image for package changes to take effect. Installing packages with `apt` inside the running terminal is not supported because the shell is unprivileged and the container filesystem is disposable.
+
 ## Configuration
 
 - `TTYD_CREDENTIAL`: required HTTP Basic Authentication credentials in `username:password` format.
